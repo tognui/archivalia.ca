@@ -1,120 +1,559 @@
-(function (root, smoothScroll) {
-  'use strict';
+var _____WB$wombat$assign$function_____ = function(name) {return (self._wb_wombat && self._wb_wombat.local_init && self._wb_wombat.local_init(name)) || self[name]; };
+if (!self.__WB_pmw) { self.__WB_pmw = function(obj) { this.__WB_source = obj; return this; } }
+{
+  let window = _____WB$wombat$assign$function_____("window");
+  let self = _____WB$wombat$assign$function_____("self");
+  let document = _____WB$wombat$assign$function_____("document");
+  let location = _____WB$wombat$assign$function_____("location");
+  let top = _____WB$wombat$assign$function_____("top");
+  let parent = _____WB$wombat$assign$function_____("parent");
+  let frames = _____WB$wombat$assign$function_____("frames");
+  let opener = _____WB$wombat$assign$function_____("opener");
 
-  // Support RequireJS and CommonJS/NodeJS module formats.
-  // Attach smoothScroll to the `window` when executed as a <script>.
+// SmoothScroll for websites v1.2.1
+// Licensed under the terms of the MIT license.
 
-  // RequireJS
-  if (typeof define === 'function' && define.amd) {
-    define(smoothScroll);
+// People involved
+//  - Balazs Galambosi (maintainer)  
+//  - Michael Herf     (Pulse Algorithm)
 
-  // CommonJS
-  } else if (typeof exports === 'object' && typeof module === 'object') {
-    module.exports = smoothScroll();
 
-  } else {
-    root.smoothScroll = smoothScroll();
-  }
+(function(){
+  
+// Scroll Variables (tweakable)
+var defaultOptions = {
 
-})(this, function(){
-'use strict';
+    // Scrolling Core
+    frameRate        : 150, // [Hz]
+    animationTime    : 400, // [px]
+    stepSize         : 100, // [px]
 
-// Do not initialize smoothScroll when running server side, handle it in client:
-if (typeof window !== 'object') return;
+    // Pulse (less tweakable)
+    // ratio of "tail" to "acceleration"
+    pulseAlgorithm   : true,
+    pulseScale       : 8,
+    pulseNormalize   : 1,
 
-// We do not want this script to be applied in browsers that do not support those
-// That means no smoothscroll on IE9 and below.
-if(document.querySelectorAll === void 0 || window.pageYOffset === void 0 || history.pushState === void 0) { return; }
+    // Acceleration
+    accelerationDelta : 20,  // 20
+    accelerationMax   : 1,   // 1
 
-// Get the top position of an element in the document
-var getTop = function(element, start) {
-    // return value of html.getBoundingClientRect().top ... IE : 0, other browsers : -pageYOffset
-    if(element.nodeName === 'HTML') return -start
-    return element.getBoundingClientRect().top + start
-}
-// ease in out function thanks to:
-// http://blog.greweb.fr/2012/02/bezier-curve-based-easing-functions-from-concept-to-implementation/
-var easeInOutCubic = function (t) { return t<.5 ? 4*t*t*t : (t-1)*(2*t-2)*(2*t-2)+1 }
+    // Keyboard Settings
+    keyboardSupport   : true,  // option
+    arrowScroll       : 40,     // [px]
 
-// calculate the scroll position we should be in
-// given the start and end point of the scroll
-// the time elapsed from the beginning of the scroll
-// and the total duration of the scroll (default 500ms)
-var position = function(start, end, elapsed, duration) {
-    if (elapsed > duration) return end;
-    return start + (end - start) * easeInOutCubic(elapsed / duration); // <-- you can change the easing funtion there
-    // return start + (end - start) * (elapsed / duration); // <-- this would give a linear scroll
-}
+    // Other
+    touchpadSupport   : true,
+    fixedBackground   : true, 
+    excluded          : ""    
+};
 
-// we use requestAnimationFrame to be called by the browser before every repaint
-// if the first argument is an element then scroll to the top of this element
-// if the first argument is numeric then scroll to this location
-// if the callback exist, it is called when the scrolling is finished
-// if context is set then scroll that element, else scroll window
-var smoothScroll = function(el, duration, callback, context){
-    duration = duration || 500;
-    context = context || window;
-    var start = context.scrollTop || window.pageYOffset;
+var options = defaultOptions;
 
-    if (typeof el === 'number') {
-      var end = parseInt(el);
-    } else {
-      var end = getTop(el, start);
+
+// Other Variables
+var isExcluded = false;
+var isFrame = false;
+var direction = { x: 0, y: 0 };
+var initDone  = false;
+var root = document.documentElement;
+var activeElement;
+var observer;
+var deltaBuffer = [ 120, 120, 120 ];
+
+var key = { left: 37, up: 38, right: 39, down: 40, spacebar: 32, 
+            pageup: 33, pagedown: 34, end: 35, home: 36 };
+
+
+/***********************************************
+ * SETTINGS 
+ * SETTINGS 
+ ***********************************************/
+
+var options = defaultOptions;
+
+
+/***********************************************
+ * INITIALIZE
+ ***********************************************/
+
+/**
+ * Tests if smooth scrolling is allowed. Shuts down everything if not.
+ */
+function initTest() {
+
+    var disableKeyboard = false; 
+    
+    // disable keyboard support if anything above requested it
+    if (disableKeyboard) {
+        removeEvent("keydown", keydown);
     }
 
-    var clock = Date.now();
-    var requestAnimationFrame = window.requestAnimationFrame ||
-        window.mozRequestAnimationFrame || window.webkitRequestAnimationFrame ||
-        function(fn){window.setTimeout(fn, 15);};
+    if (options.keyboardSupport && !disableKeyboard) {
+        addEvent("keydown", keydown);
+    }
+}
 
-    var step = function(){
-        var elapsed = Date.now() - clock;
-        if (context !== window) {
-          context.scrollTop = position(start, end, elapsed, duration);
-        }
-        else {
-          window.scroll(0, position(start, end, elapsed, duration));
-        }
+/**
+ * Sets up scrolls array, determines if frames are involved.
+ */
+function init() {
+  
+    if (!document.body) return;
 
-        if (elapsed > duration) {
-            if (typeof callback === 'function') {
-                callback(el);
+    var body = document.body;
+    var html = document.documentElement;
+    var windowHeight = window.innerHeight; 
+    var scrollHeight = body.scrollHeight;
+    
+    // check compat mode for root element
+    root = (document.compatMode.indexOf('CSS') >= 0) ? html : body;
+    activeElement = body;
+    
+    initTest();
+    initDone = true;
+
+    // Checks if this script is running in a frame
+    if (top != self) {
+        isFrame = true;
+    }
+
+    /**
+     * This fixes a bug where the areas left and right to 
+     * the content does not trigger the onmousewheel event
+     * on some pages. e.g.: html, body { height: 100% }
+     */
+    else if (scrollHeight > windowHeight &&
+            (body.offsetHeight <= windowHeight || 
+             html.offsetHeight <= windowHeight)) {
+
+        html.style.height = 'auto';
+        //setTimeout(refresh, 10);
+
+        // clearfix
+        if (root.offsetHeight <= windowHeight) {
+            var underlay = document.createElement("div"); 	
+            underlay.style.clear = "both";
+            body.appendChild(underlay);
+        }
+    }
+
+    // disable fixed background
+    if (!options.fixedBackground && !isExcluded) {
+        body.style.backgroundAttachment = "scroll";
+        html.style.backgroundAttachment = "scroll";
+    }
+}
+
+
+/************************************************
+ * SCROLLING 
+ ************************************************/
+ 
+var que = [];
+var pending = false;
+var lastScroll = +new Date;
+
+/**
+ * Pushes scroll actions to the scrolling queue.
+ */
+function scrollArray(elem, left, top, delay) {
+    
+    delay || (delay = 1000);
+    directionCheck(left, top);
+
+    if (options.accelerationMax != 1) {
+        var now = +new Date;
+        var elapsed = now - lastScroll;
+        if (elapsed < options.accelerationDelta) {
+            var factor = (1 + (30 / elapsed)) / 2;
+            if (factor > 1) {
+                factor = Math.min(factor, options.accelerationMax);
+                left *= factor;
+                top  *= factor;
             }
-        } else {
-            requestAnimationFrame(step);
         }
-    }
-    step();
+        lastScroll = +new Date;
+    }          
+    
+    // push a scroll command
+    que.push({
+        x: left, 
+        y: top, 
+        lastX: (left < 0) ? 0.99 : -0.99,
+        lastY: (top  < 0) ? 0.99 : -0.99, 
+        start: +new Date
+    });
+        
+    // don't act if there's a pending queue
+    if (pending) {
+        return;
+    }  
+
+    var scrollWindow = (elem === document.body);
+    
+    var step = function (time) {
+        
+        var now = +new Date;
+        var scrollX = 0;
+        var scrollY = 0; 
+    
+        for (var i = 0; i < que.length; i++) {
+            
+            var item = que[i];
+            var elapsed  = now - item.start;
+            var finished = (elapsed >= options.animationTime);
+            
+            // scroll position: [0, 1]
+            var position = (finished) ? 1 : elapsed / options.animationTime;
+            
+            // easing [optional]
+            if (options.pulseAlgorithm) {
+                position = pulse(position);
+            }
+            
+            // only need the difference
+            var x = (item.x * position - item.lastX) >> 0;
+            var y = (item.y * position - item.lastY) >> 0;
+            
+            // add this to the total scrolling
+            scrollX += x;
+            scrollY += y;            
+            
+            // update last values
+            item.lastX += x;
+            item.lastY += y;
+        
+            // delete and step back if it's over
+            if (finished) {
+                que.splice(i, 1); i--;
+            }           
+        }
+
+        // scroll left and top
+        if (scrollWindow) {
+            window.scrollBy(scrollX, scrollY);
+        } 
+        else {
+            if (scrollX) elem.scrollLeft += scrollX;
+            if (scrollY) elem.scrollTop  += scrollY;                    
+        }
+        
+        // clean up if there's nothing left to do
+        if (!left && !top) {
+            que = [];
+        }
+        
+        if (que.length) { 
+            requestFrame(step, elem, (delay / options.frameRate + 1)); 
+        } else { 
+            pending = false;
+        }
+    };
+    
+    // start a new queue of actions
+    requestFrame(step, elem, 0);
+    pending = true;
 }
 
-var linkHandler = function(ev) {
-    if (!ev.defaultPrevented) {
-        ev.preventDefault();
 
-        if (location.hash !== this.hash) window.history.pushState(null, null, this.hash)
-        // using the history api to solve issue #1 - back doesn't work
-        // most browser don't update :target when the history api is used:
-        // THIS IS A BUG FROM THE BROWSERS.
-        // change the scrolling duration in this call
-        var node = document.getElementById(this.hash.substring(1))
-        if (!node) return; // Do not scroll to non-existing node
+/***********************************************
+ * EVENTS
+ ***********************************************/
 
-        smoothScroll(node, 500, function (el) {
-            location.replace('#' + el.id)
-            // this will cause the :target to be activated.
-        });
+/**
+ * Mouse wheel handler.
+ * @param {Object} event
+ */
+function wheel(event) {
+
+    if (!initDone) {
+        init();
+    }
+    
+    var target = event.target;
+    var overflowing = overflowingAncestor(target);
+    
+    // use default if there's no overflowing
+    // element or default action is prevented    
+    if (!overflowing || event.defaultPrevented ||
+        isNodeName(activeElement, "embed") ||
+       (isNodeName(target, "embed") && /\.pdf/i.test(target.src))) {
+        return true;
+    }
+
+    var deltaX = event.wheelDeltaX || 0;
+    var deltaY = event.wheelDeltaY || 0;
+    
+    // use wheelDelta if deltaX/Y is not available
+    if (!deltaX && !deltaY) {
+        deltaY = event.wheelDelta || 0;
+    }
+
+    // check if it's a touchpad scroll that should be ignored
+    if (!options.touchpadSupport && isTouchpad(deltaY)) {
+        return true;
+    }
+
+    // scale by step size
+    // delta is 120 most of the time
+    // synaptics seems to send 1 sometimes
+    if (Math.abs(deltaX) > 1.2) {
+        deltaX *= options.stepSize / 120;
+    }
+    if (Math.abs(deltaY) > 1.2) {
+        deltaY *= options.stepSize / 120;
+    }
+    
+    scrollArray(overflowing, -deltaX, -deltaY);
+    event.preventDefault();
+}
+
+/**
+ * Keydown event handler.
+ * @param {Object} event
+ */
+function keydown(event) {
+
+    var target   = event.target;
+    var modifier = event.ctrlKey || event.altKey || event.metaKey || 
+                  (event.shiftKey && event.keyCode !== key.spacebar);
+    
+    // do nothing if user is editing text
+    // or using a modifier key (except shift)
+    // or in a dropdown
+    if ( /input|textarea|select|embed/i.test(target.nodeName) ||
+         target.isContentEditable || 
+         event.defaultPrevented   ||
+         modifier ) {
+      return true;
+    }
+    // spacebar should trigger button press
+    if (isNodeName(target, "button") &&
+        event.keyCode === key.spacebar) {
+      return true;
+    }
+    
+    var shift, x = 0, y = 0;
+    var elem = overflowingAncestor(activeElement);
+    var clientHeight = elem.clientHeight;
+
+    if (elem == document.body) {
+        clientHeight = window.innerHeight;
+    }
+
+    switch (event.keyCode) {
+        case key.up:
+            y = -options.arrowScroll;
+            break;
+        case key.down:
+            y = options.arrowScroll;
+            break;         
+        case key.spacebar: // (+ shift)
+            shift = event.shiftKey ? 1 : -1;
+            y = -shift * clientHeight * 0.9;
+            break;
+        case key.pageup:
+            y = -clientHeight * 0.9;
+            break;
+        case key.pagedown:
+            y = clientHeight * 0.9;
+            break;
+        case key.home:
+            y = -elem.scrollTop;
+            break;
+        case key.end:
+            var damt = elem.scrollHeight - elem.scrollTop - clientHeight;
+            y = (damt > 0) ? damt+10 : 0;
+            break;
+        case key.left:
+            x = -options.arrowScroll;
+            break;
+        case key.right:
+            x = options.arrowScroll;
+            break;            
+        default:
+            return true; // a key we don't care about
+    }
+
+    scrollArray(elem, x, y);
+    event.preventDefault();
+}
+
+/**
+ * Mousedown event only for updating activeElement
+ */
+function mousedown(event) {
+    activeElement = event.target;
+}
+
+
+/***********************************************
+ * OVERFLOW
+ ***********************************************/
+ 
+var cache = {}; // cleared out every once in while
+setInterval(function () { cache = {}; }, 10 * 1000);
+
+var uniqueID = (function () {
+    var i = 0;
+    return function (el) {
+        return el.uniqueID || (el.uniqueID = i++);
+    };
+})();
+
+function setCache(elems, overflowing) {
+    for (var i = elems.length; i--;)
+        cache[uniqueID(elems[i])] = overflowing;
+    return overflowing;
+}
+
+function overflowingAncestor(el) {
+    var elems = [];
+    var rootScrollHeight = root.scrollHeight;
+    do {
+        var cached = cache[uniqueID(el)];
+        if (cached) {
+            return setCache(elems, cached);
+        }
+        elems.push(el);
+        if (rootScrollHeight === el.scrollHeight) {
+            if (!isFrame || root.clientHeight + 10 < rootScrollHeight) {
+                return setCache(elems, document.body); // scrolling root in WebKit
+            }
+        } else if (el.clientHeight + 10 < el.scrollHeight) {
+            overflow = getComputedStyle(el, "").getPropertyValue("overflow-y");
+            if (overflow === "scroll" || overflow === "auto") {
+                return setCache(elems, el);
+            }
+        }
+    } while (el = el.parentNode);
+}
+
+
+/***********************************************
+ * HELPERS 
+ ***********************************************/
+
+function addEvent(type, fn, bubble) {
+    window.addEventListener(type, fn, (bubble||false));
+}
+
+function removeEvent(type, fn, bubble) {
+    window.removeEventListener(type, fn, (bubble||false));  
+}
+
+function isNodeName(el, tag) {
+    return (el.nodeName||"").toLowerCase() === tag.toLowerCase();
+}
+
+function directionCheck(x, y) {
+    x = (x > 0) ? 1 : -1;
+    y = (y > 0) ? 1 : -1;
+    if (direction.x !== x || direction.y !== y) {
+        direction.x = x;
+        direction.y = y;
+        que = [];
+        lastScroll = 0;
     }
 }
 
-// We look for all the internal links in the documents and attach the smoothscroll function
-document.addEventListener("DOMContentLoaded", function () {
-    var internal = document.querySelectorAll('a[href^="#"]:not([href="#"])'), a;
-    for(var i=internal.length; a=internal[--i];){
-        a.addEventListener("click", linkHandler, false);
+var deltaBufferTimer;
+
+function isTouchpad(deltaY) {
+    if (!deltaY) return;
+    deltaY = Math.abs(deltaY)
+    deltaBuffer.push(deltaY);
+    deltaBuffer.shift();
+    clearTimeout(deltaBufferTimer);
+
+    var allEquals    = (deltaBuffer[0] == deltaBuffer[1] && 
+                        deltaBuffer[1] == deltaBuffer[2]);
+    var allDivisable = (isDivisible(deltaBuffer[0], 120) &&
+                        isDivisible(deltaBuffer[1], 120) &&
+                        isDivisible(deltaBuffer[2], 120));
+    return !(allEquals || allDivisable);
+} 
+
+function isDivisible(n, divisor) {
+    return (Math.floor(n / divisor) == n / divisor);
+}
+
+var requestFrame = (function () {
+      return  window.requestAnimationFrame       || 
+              window.webkitRequestAnimationFrame || 
+              function (callback, element, delay) {
+                  window.setTimeout(callback, delay || (1000/60));
+              };
+})();
+
+
+/***********************************************
+ * PULSE
+ ***********************************************/
+ 
+/**
+ * Viscous fluid with a pulse for part and decay for the rest.
+ * - Applies a fixed force over an interval (a damped acceleration), and
+ * - Lets the exponential bleed away the velocity over a longer interval
+ * - Michael Herf, http://stereopsis.com/stopping/
+ */
+function pulse_(x) {
+    var val, start, expx;
+    // test
+    x = x * options.pulseScale;
+    if (x < 1) { // acceleartion
+        val = x - (1 - Math.exp(-x));
+    } else {     // tail
+        // the previous animation ended here:
+        start = Math.exp(-1);
+        // simple viscous drag
+        x -= 1;
+        expx = 1 - Math.exp(-x);
+        val = start + (expx * (1 - start));
     }
-});
+    return val * options.pulseNormalize;
+}
 
-// return smoothscroll API
-return smoothScroll;
+function pulse(x) {
+    if (x >= 1) return 1;
+    if (x <= 0) return 0;
 
-});
+    if (options.pulseNormalize == 1) {
+        options.pulseNormalize /= pulse_(1);
+    }
+    return pulse_(x);
+}
+
+var isChrome = /chrome/i.test(window.navigator.userAgent);
+var isMouseWheelSupported = 'onmousewheel' in document; 
+
+if (isMouseWheelSupported && isChrome) {
+	addEvent("mousedown", mousedown);
+	addEvent("mousewheel", wheel);
+	addEvent("load", init);
+};
+
+})();
+
+}
+/*
+     FILE ARCHIVED ON 21:46:09 Dec 04, 2018 AND RETRIEVED FROM THE
+     INTERNET ARCHIVE ON 15:57:38 Mar 16, 2025.
+     JAVASCRIPT APPENDED BY WAYBACK MACHINE, COPYRIGHT INTERNET ARCHIVE.
+
+     ALL OTHER CONTENT MAY ALSO BE PROTECTED BY COPYRIGHT (17 U.S.C.
+     SECTION 108(a)(3)).
+*/
+/*
+playback timings (ms):
+  captures_list: 0.877
+  exclusion.robots: 0.03
+  exclusion.robots.policy: 0.012
+  esindex: 0.017
+  cdx.remote: 6.993
+  LoadShardBlock: 149.402 (3)
+  PetaboxLoader3.datanode: 189.562 (4)
+  load_resource: 345.264
+  PetaboxLoader3.resolve: 274.861
+*/
