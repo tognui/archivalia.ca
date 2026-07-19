@@ -7,3 +7,9 @@ body{
 html{
 
 }
+
+header{
+    display: flex;
+    justify-content: space-around;
+    background-color: rgb(194, 242, 230);
+}

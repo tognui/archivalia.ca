@@ -62,7 +62,7 @@ This will be Hosted on Nekoweb!
 - navigate japanese web (X)
 - Pixiv dic (X)
 - web-wayback
-- 
+- links to most like useful websites (hetarchive, doujins etc.)
 - scans/translations (X)
 
 #### *FAQ*
@@ -70,6 +70,7 @@ This will be Hosted on Nekoweb!
 - jp locale (X)
 - jp web (X)
 - questions (X)
+- contribution(X)
 
 #### *Extra*
 - __EXTRA__ (X)
